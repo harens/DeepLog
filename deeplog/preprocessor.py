@@ -151,7 +151,10 @@ class Preprocessor(object):
         ################################################################
 
         # Set events as events
-        events = torch.Tensor(data['event'].values).to(torch.long)
+        events = torch.as_tensor(
+            data['event'].to_numpy(copy=True),
+            dtype=torch.long,
+        )
 
         # Set context full of NO_EVENTs
         context = torch.full(
@@ -161,10 +164,13 @@ class Preprocessor(object):
 
         # Set labels if given
         if labels.ndim:
-            labels = torch.Tensor(labels).to(torch.long)
+            labels = torch.as_tensor(labels.copy(), dtype=torch.long)
         # Set labels if contained in data
         elif 'label' in data.columns:
-            labels = torch.Tensor(data['label'].values).to(torch.long)
+            labels = torch.as_tensor(
+                data['label'].to_numpy(copy=True),
+                dtype=torch.long,
+            )
         # Otherwise set labels to None
         else:
             labels = None
@@ -184,9 +190,12 @@ class Preprocessor(object):
         # Group by machine
         for machine, events_ in machine_grouped:
             # Get indices, timestamps and events
-            indices    = events_.index.values
-            timestamps = events_['timestamp'].values
-            events_    = events_['event'].values
+            indices    = torch.as_tensor(
+                events_.index.to_numpy(copy=True),
+                dtype=torch.long,
+            )
+            timestamps = events_['timestamp'].to_numpy(copy=True)
+            events_    = events_['event'].to_numpy(copy=True)
 
             # Initialise context for single machine
             machine_context = np.full(
@@ -210,10 +219,13 @@ class Preprocessor(object):
                     events_[:-i-1],
                 )
 
-            # Convert to torch Tensor
-            machine_context = torch.Tensor(machine_context).to(torch.long)
+            # Convert to torch Tensor using a writable copy
+            machine_context = torch.as_tensor(
+                machine_context.copy(),
+                dtype=torch.long,
+            )
             # Add machine_context to context
-            context[indices] = machine_context
+            context.index_copy_(0, indices, machine_context)
 
         ################################################################
         #                        Return results                        #
