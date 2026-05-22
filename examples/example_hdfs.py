@@ -18,10 +18,48 @@ preprocessor = Preprocessor(
     timeout = float('inf'), # Do not include a maximum allowed time between events
 )
 
-# Load data from HDFS dataset
-X_train       , y_train       , label_train       , mapping_train        = preprocessor.text("./data/hdfs_train"        , verbose=True)
-X_test        , y_test        , label_test        , mapping_test         = preprocessor.text("./data/hdfs_test_normal"  , verbose=True)
-X_test_anomaly, y_test_anomaly, label_test_anomaly, mapping_test_anomaly = preprocessor.text("./data/hdfs_test_abnormal", verbose=True)
+# Load the three HDFS splits.
+#
+# The preprocessor remaps each file independently unless a mapping is supplied.
+# Reusing the train mapping for the test splits keeps shared event IDs aligned
+# with the training vocabulary.
+X_train, y_train, label_train, mapping_train = preprocessor.text(
+    "./data/hdfs_train",
+    verbose=True,
+)
+X_test, y_test, label_test, mapping_test = preprocessor.text(
+    "./data/hdfs_test_normal",
+    verbose=True,
+    mapping=mapping_train,
+)
+X_test_anomaly, y_test_anomaly, label_test_anomaly, mapping_test_anomaly = (
+    preprocessor.text(
+        "./data/hdfs_test_abnormal",
+        verbose=True,
+        mapping=mapping_train,
+    )
+)
+
+input_size = max(
+    len(mapping_train),
+    len(mapping_test),
+    len(mapping_test_anomaly),
+)
+
+no_event_id = next(
+    index for index, event_id in mapping_train.items() if event_id == preprocessor.NO_EVENT
+)
+
+
+def _drop_warm_up(context: torch.Tensor, events: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Drop left-padded warm-up rows so scoring starts after real history."""
+    mask = torch.all(context != no_event_id, dim=1)
+    return context[mask], events[mask]
+
+
+X_train, y_train = _drop_warm_up(X_train, y_train)
+X_test, y_test = _drop_warm_up(X_test, y_test)
+X_test_anomaly, y_test_anomaly = _drop_warm_up(X_test_anomaly, y_test_anomaly)
 
 ##############################################################################
 #                                  DeepLog                                   #
@@ -29,9 +67,9 @@ X_test_anomaly, y_test_anomaly, label_test_anomaly, mapping_test_anomaly = prepr
 
 # Create DeepLog object
 deeplog = DeepLog(
-    input_size  = 30, # Number of different events to expect
+    input_size  = input_size,
     hidden_size = 64 , # Hidden dimension, we suggest 64
-    output_size = 30, # Number of different events to expect
+    output_size = input_size,
 )
 
 # Optionally cast data and DeepLog to cuda, if available
