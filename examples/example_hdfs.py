@@ -45,6 +45,7 @@ input_size = max(
     len(mapping_test),
     len(mapping_test_anomaly),
 )
+train_vocab_size = len(mapping_train)
 
 no_event_id = next(
     index for index, event_id in mapping_train.items() if event_id == preprocessor.NO_EVENT
@@ -55,6 +56,10 @@ def _drop_warm_up(context: torch.Tensor, events: torch.Tensor) -> tuple[torch.Te
     """Drop left-padded warm-up rows so scoring starts after real history."""
     mask = torch.all(context != no_event_id, dim=1)
     return context[mask], events[mask]
+
+
+def _fail_closed_oov_mask(context: torch.Tensor, events: torch.Tensor) -> torch.Tensor:
+    return torch.any(context >= train_vocab_size, dim=1) | (events >= train_vocab_size)
 
 
 X_train, y_train = _drop_warm_up(X_train, y_train)
@@ -130,13 +135,13 @@ print(classification_report(
 anomalies_normal = ~torch.any(
     y_test == y_pred_normal.T,
     dim = 0,
-)
+) | _fail_closed_oov_mask(X_test, y_test)
 
 # Check for anomalies in abnormal data (ideally, we should not find all)
 anomalies_abnormal = ~torch.any(
     y_test_anomaly == y_pred_anomaly.T,
     dim = 0,
-)
+) | _fail_closed_oov_mask(X_test_anomaly, y_test_anomaly)
 
 # Compute classification report for anomalies
 y_pred = torch.cat((anomalies_normal, anomalies_abnormal))
