@@ -45,14 +45,14 @@ deeplog = DeepLog(
 
 # Optionally cast data and DeepLog to cuda, if available
 if torch.cuda.is_available():
-    # Set deeplog to device
-    deeplog = deeplog.to("cuda")
+    torch_device = "cuda"
+elif torch.backends.mps.is_available():
+    torch_device = "mps"
+else:
+    torch_device = "cpu"
 
-    # Set data to device
-    X_train = X_train.to("cuda")
-    y_train = y_train.to("cuda")
-    X_test  = X_test .to("cuda")
-    y_test  = y_test .to("cuda")
+# Set deeplog to device
+deeplog = deeplog.to(torch_device)
 
 # Train deeplog
 deeplog.fit(
@@ -67,6 +67,7 @@ deeplog.fit(
 y_pred, confidence = deeplog.predict(
     X = X_test,
     k = 3, # Change this value to get the top k predictions (called 'g' in DeepLog paper, see Figure 6)
+    batch_size = 128,
 )
 
 ################################################################################

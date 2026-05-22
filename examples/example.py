@@ -1,3 +1,6 @@
+# Import pytorch
+import torch
+
 # import DeepLog and Preprocessor
 from deeplog              import DeepLog
 from deeplog.preprocessor import Preprocessor
@@ -29,9 +32,14 @@ deeplog = DeepLog(
 )
 
 # Optionally cast data and DeepLog to cuda, if available
-deeplog = deeplog.to("cuda")
-X       = X      .to("cuda")
-y       = y      .to("cuda")
+if torch.cuda.is_available():
+    torch_device = "cuda"
+elif torch.backends.mps.is_available():
+    torch_device = "mps"
+else:
+    torch_device = "cpu"
+
+deeplog = deeplog.to(torch_device)
 
 # Train deeplog
 deeplog.fit(

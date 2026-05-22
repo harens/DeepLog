@@ -10,6 +10,15 @@ from deeplog              import DeepLog
 from deeplog.preprocessor import Preprocessor
 
 if __name__ == "__main__":
+    def select_device(preferred: str) -> str:
+        if preferred != "auto":
+            return preferred
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            return "mps"
+        return "cpu"
+
     ########################################################################
     #                           Parse arguments                            #
     ########################################################################
@@ -46,7 +55,7 @@ if __name__ == "__main__":
     # Training
     group_training = parser.add_argument_group("Training parameters")
     group_training.add_argument('-b', '--batch-size', type=int, default=128,   help="batch size")
-    group_training.add_argument('-d', '--device'    , default='auto'     ,     help="train using given device (cpu|cuda|auto)")
+    group_training.add_argument('-d', '--device'    , default='auto'     ,     help="train using given device (cpu|cuda|mps|auto)")
     group_training.add_argument('-e', '--epochs'    , type=int, default=10,    help="number of epochs to train with")
 
     # Parse given arguments
@@ -57,8 +66,7 @@ if __name__ == "__main__":
     ########################################################################
 
     # Set device
-    if args.device is None or args.device == 'auto':
-        args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    args.device = select_device(args.device or "auto")
 
     # Create preprocessor
     preprocessor = Preprocessor(
@@ -76,9 +84,6 @@ if __name__ == "__main__":
     elif args.txt:
         # Load txt file
         X, y, label, mapping = preprocessor.txt(args.txt)
-
-    X = X.to(args.device)
-    y = y.to(args.device)
 
     ########################################################################
     #                            Create DeepLog                            #
@@ -121,10 +126,7 @@ if __name__ == "__main__":
     if args.mode == "predict":
 
         # Predict using DeepLog
-        y_pred, confidence = deeplog.predict(
-            X = X,
-            k = args.top,
-        )
+        y_pred, confidence = deeplog.predict(X = X, k = args.top)
 
         ####################################################################
         #                         Predict DeepLog                          #

@@ -1,8 +1,12 @@
-import argparse
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import tqdm
+try:
+    from torchtrain.variable_data_loader import VariableDataLoader
+except ImportError:  # pragma: no cover - fallback for older torchtrain layouts
+    from variable_data_loader import VariableDataLoader
 from torchtrain import Module
 
 class DeepLog(Module):
@@ -55,8 +59,9 @@ class DeepLog(Module):
             result : tensor
 
             """
-        # One hot encode X
-        X = F.one_hot(X.to(torch.int64), self.input_size).to(torch.float)
+        X = F.one_hot(self._to_device(X).to(torch.int64), self.input_size).to(
+            dtype=torch.float32,
+        )
 
         # Set initial hidden states
         hidden = self._get_initial_state(X)
@@ -77,7 +82,7 @@ class DeepLog(Module):
     #                            Predict method                            #
     ########################################################################
 
-    def predict(self, X, y=None, k=1, variable=False, verbose=True):
+    def predict(self, X, y=None, k=1, batch_size=32, variable=False, verbose=True):
         """Predict the k most likely output values
 
             Parameters
@@ -106,14 +111,103 @@ class DeepLog(Module):
             confidence : torch.Tensor of shape=(n_samples, k)
                 Confidence levels for each output
             """
-        # Get the predictions
-        result = super().predict(X, variable=variable, verbose=verbose)
-        # Get the probabilities from the log probabilities
-        result = result.exp()
-        # Compute k most likely outputs
-        confidence, result = result.topk(k)
-        # Return result
-        return result, confidence
+        device = self._device()
+        result = list()
+        confidence = list()
+
+        with torch.no_grad():
+            if variable:
+                data = VariableDataLoader(
+                    X,
+                    torch.zeros(len(X)),
+                    index=False,
+                    batch_size=batch_size,
+                    shuffle=False,
+                )
+                iterator = tqdm.tqdm(data, desc="Predicting", disable=not verbose)
+                for X_, _ in iterator:
+                    prediction = self(X_).exp()
+                    batch_confidence, batch_result = prediction.topk(k)
+                    result.append(batch_result.cpu())
+                    confidence.append(batch_confidence.cpu())
+            else:
+                iterator = tqdm.tqdm(
+                    range(0, X.shape[0], batch_size),
+                    desc="Predicting",
+                    disable=not verbose,
+                )
+                for batch in iterator:
+                    prediction = self(X[batch:batch + batch_size]).exp()
+                    batch_confidence, batch_result = prediction.topk(k)
+                    result.append(batch_result.cpu())
+                    confidence.append(batch_confidence.cpu())
+
+            if device.type == "mps" and hasattr(torch, "mps"):
+                torch.mps.empty_cache()
+
+        return torch.cat(result), torch.cat(confidence)
+
+    def fit(
+        self,
+        X,
+        y,
+        epochs=10,
+        batch_size=32,
+        learning_rate=0.01,
+        criterion=nn.NLLLoss(),
+        optimizer=optim.SGD,
+        variable=False,
+        verbose=True,
+        **kwargs,
+    ):
+        """Train DeepLog with batches moved to the model device."""
+        optimizer = optimizer(params=self.parameters(), lr=learning_rate)
+        device = self._device()
+
+        for epoch in range(1, epochs + 1):
+            try:
+                if variable:
+                    iterator = tqdm.tqdm(
+                        VariableDataLoader(X, y, batch_size=batch_size, shuffle=True),
+                        desc="[Epoch {:{width}}/{:{width}}]".format(
+                            epoch,
+                            epochs,
+                            width=len(str(epochs)),
+                        ),
+                        disable=not verbose,
+                    )
+                    for X_, y_ in iterator:
+                        optimizer.zero_grad()
+                        y_ = y_.to(device)
+                        y_pred = self(X_)
+                        loss = criterion(y_pred, y_)
+                        loss.backward()
+                        optimizer.step()
+                else:
+                    indices = torch.randperm(X.shape[0])
+                    iterator = tqdm.tqdm(
+                        range(0, X.shape[0], batch_size),
+                        desc="[Epoch {:{width}}/{:{width}}]".format(
+                            epoch,
+                            epochs,
+                            width=len(str(epochs)),
+                        ),
+                        disable=not verbose,
+                    )
+                    for batch in iterator:
+                        optimizer.zero_grad()
+                        batch_indices = indices[batch:batch + batch_size]
+                        X_ = X[batch_indices]
+                        y_ = y[batch_indices].to(device)
+                        y_pred = self(X_)
+                        loss = criterion(y_pred, y_)
+                        loss.backward()
+                        optimizer.step()
+            except KeyboardInterrupt:
+                print("\nTraining interrupted, performing clean stop")
+                break
+
+        return self
 
     ########################################################################
     #                             I/O methods                              #
@@ -175,7 +269,17 @@ class DeepLog(Module):
         """Return a given hidden state for X."""
         # Return tensor of correct shape as device
         return torch.zeros(
-            self.num_layers ,
-            X.size(0)       ,
-            self.hidden_size
-        ).to(X.device)
+            self.num_layers,
+            X.size(0),
+            self.hidden_size,
+            device=self._device(),
+            dtype=torch.float32,
+        )
+
+    def _to_device(self, X):
+        """Move a tensor to the model device."""
+        return X.to(self._device())
+
+    def _device(self):
+        """Return the current model device."""
+        return next(self.parameters()).device

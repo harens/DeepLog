@@ -79,16 +79,14 @@ deeplog = DeepLog(
 
 # Optionally cast data and DeepLog to cuda, if available
 if torch.cuda.is_available():
-    # Set deeplog to device
-    deeplog = deeplog.to("cuda")
+    torch_device = "cuda"
+elif torch.backends.mps.is_available():
+    torch_device = "mps"
+else:
+    torch_device = "cpu"
 
-    # Set data to device
-    X_train        = X_train       .to("cuda")
-    y_train        = y_train       .to("cuda")
-    X_test         = X_test        .to("cuda")
-    y_test         = y_test        .to("cuda")
-    X_test_anomaly = X_test_anomaly.to("cuda")
-    y_test_anomaly = y_test_anomaly.to("cuda")
+# Set data to device
+deeplog = deeplog.to(torch_device)
 
 # Train deeplog
 deeplog.fit(
@@ -103,12 +101,14 @@ deeplog.fit(
 y_pred_normal, confidence = deeplog.predict(
     X = X_test,
     k = 9, # Change this value to get the top k predictions (called 'g' in DeepLog paper, see Figure 6)
+    batch_size = 128,
 )
 
 # Predict anomalous data using deeplog
 y_pred_anomaly, confidence = deeplog.predict(
     X = X_test_anomaly,
     k = 9, # Change this value to get the top k predictions (called 'g' in DeepLog paper, see Figure 6)
+    batch_size = 128,
 )
 
 ################################################################################
